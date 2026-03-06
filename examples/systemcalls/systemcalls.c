@@ -16,8 +16,16 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
+    unsigned char err;
+    unsigned char ret;
+    err = system(cmd);
+    if (err == -1) {
+        ret = false;
+    } else {
+        ret = true;
+    }
 
-    return true;
+    return ret;
 }
 
 /**
@@ -40,15 +48,13 @@ bool do_exec(int count, ...)
     va_start(args, count);
     char * command[count+1];
     int i;
+    int pid;
+    int status;
     for(i=0; i<count; i++)
     {
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
-
 /*
  * TODO:
  *   Execute a system command by calling fork, execv(),
@@ -61,7 +67,22 @@ bool do_exec(int count, ...)
 
     va_end(args);
 
-    return true;
+    pid = fork();
+    if (pid == -1) {
+        // if fork exited with error return false
+        return false;
+    }
+    if (pid == 0) {
+        execv(command[0],&command[0]);
+        // if execution did not switch to process then child did not run return false
+        exit(-1);
+    }
+    // wait for any child process in same group
+    if (waitpid(pid, &status, 0) == -1) return false;
+    // if child process is exited normally return true
+    if (WIFEXITED(status)) return WEXITSTATUS(status) == 0;
+    
+    return false;
 }
 
 /**
@@ -72,6 +93,9 @@ bool do_exec(int count, ...)
 bool do_exec_redirect(const char *outputfile, int count, ...)
 {
     va_list args;
+    int fd;
+    int pid;
+    int status;
     va_start(args, count);
     char * command[count+1];
     int i;
@@ -80,9 +104,6 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
 
 /*
@@ -94,6 +115,39 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
 */
 
     va_end(args);
+    fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+    // if the file to redirect standard out to did not open correctly return false
+    if (fd < 0) return false;
 
-    return true;
+    pid = fork();
+    if (pid == -1) {
+        // if fork exited with error return false
+        return false;
+    }
+    if (pid == 0) {
+        if (dup2(fd, STDOUT_FILENO) < 0) exit(-1);
+
+        close(fd);
+
+        execv(command[0], &command[0]);
+
+        exit(-1);
+    }
+    // wait for any child process in same group
+    if (waitpid(pid, &status, 0) == -1) return false;
+    // if child process is exited normally return true
+    if (WIFEXITED(status)) return WEXITSTATUS(status) == 0;
+    
+    return false;
 }
+
+// int main() {
+//     int ret;
+//     // ret = do_system("echo Hello World");
+    
+//     ret = do_exec(2, "echo", "helllllll------");
+//     // ret = do_exec_redirect("/data/dev/learning/embedded-linux/aesd/assignments/aesd-assignment3-3mad10/redirect.txt",3, "/bin/echo","echo", "helllllll------");
+
+//     printf("ret %d \n", ret);
+//     return ret==true?0:-1;
+// }
