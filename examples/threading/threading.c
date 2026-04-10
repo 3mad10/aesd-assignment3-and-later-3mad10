@@ -18,7 +18,7 @@ void* threadfunc(void* thread_param)
     struct thread_data* thread_func_args = (struct thread_data *) thread_param;
     thread_func_args->thread_complete_success=true;
 
-    DEBUG_LOG("will wait for : %d\n", thread_func_args->wait_to_obtain_ms);
+    DEBUG_LOG("Thread will wait for : %d\n", thread_func_args->wait_to_obtain_ms);
     usleep((thread_func_args->wait_to_obtain_ms)*1000);
     err = pthread_mutex_lock(thread_func_args->mutex);
     DEBUG_LOG("mutex lock return : %d\n", err);
