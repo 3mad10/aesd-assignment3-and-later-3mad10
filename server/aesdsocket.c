@@ -75,7 +75,6 @@ int main(int argc, char* argv[]) {
     }
 
     while(g_server_running) {
-        DEBUG_LOG("g_server_running = %d" , g_server_running);
         cfd = wait_for_connection(sfd, client_addr, sizeof(client_addr));
 
         if (cfd == -1) {

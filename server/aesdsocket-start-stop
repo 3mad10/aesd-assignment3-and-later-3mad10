@@ -1,0 +1,23 @@
+#! /bin/sh
+
+# DAEMON=/usr/bin/aesdsocket
+DAEMON=/data/dev/learning/embedded-linux/aesd/assignments/aesd-assignment3-3mad10/server/aesdsocket
+NAME=cupsd
+PIDFILE=/run/cups/$NAME.pid
+DESC="Common Unix Printing System"
+SCRIPTNAME=/etc/init.d/cups
+
+case "$1" in
+    start)
+        echo "Starting aesdsocket"
+        start-stop-daemon --start -n aesdsocket --exec $DAEMON -- -d
+        ;;
+    stop)
+        echo "Stopping aesdsocket"
+        start-stop-daemon --stop -n aesdsocket
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+esac
+exit 0
