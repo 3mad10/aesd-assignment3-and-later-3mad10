@@ -8,5 +8,5 @@
 #define BACKLOG 10
 #define RECEIVED_SOCKET_DATA_PATH "/var/tmp/aesdsocketdata"
 #define REALLOC_LIMIT 2
-
+#define TIMESTAMP_THREAD_SLEEP_TIME 10
 #endif // SERVER_CFG

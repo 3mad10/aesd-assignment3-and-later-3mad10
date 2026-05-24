@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <syslog.h>
+#include <unistd.h>
 
 void write_to_file(int fd, const char* buf, int len);
 

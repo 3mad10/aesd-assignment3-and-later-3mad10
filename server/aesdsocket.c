@@ -3,8 +3,18 @@
 #include "aesdsocket.h"
 #include "server_cfg.h"
 
+struct slist_job_data
+{
+    struct job_data* elm;
+    SLIST_ENTRY(slist_job_data) entries;
+};
 
-bool g_server_running = true;
+static volatile sig_atomic_t g_server_running = 1;
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_t g_timestamp_thread_id;
+
+
+SLIST_HEAD(slisthead, slist_job_data) head = SLIST_HEAD_INITIALIZER(head);
 
 static void sigint_handler (int signo)
 {
@@ -16,7 +26,89 @@ static void sigint_handler (int signo)
         /* this should never happen */
         exit (EXIT_FAILURE);
     }
-    g_server_running = false;
+    g_server_running = 0;
+    
+}
+
+
+void* threadfunc(void* data)
+{
+    int err;
+    struct job_data * job_data = (struct job_data *) data;
+    job_data->job_state = PENDING;
+    err = echo_conn(job_data);
+    if (err == -1) {
+        job_data->job_state = FAILED;
+        DEBUG_LOG("Connection failed with error %s", strerror(errno));
+        syslog(LOG_ERR ,"Connection failed with error %s", strerror(errno));
+    } else {
+        job_data->job_state = SUCCESS;
+    }
+
+    close(job_data->cfd);
+
+    printf("[Server] Closed connection from %s\n", job_data->client);
+    syslog(LOG_INFO ,"Closed connection from %s", job_data->client);
+    return (void*)job_data;
+}
+
+void* timestamp_threadfunc(void* data)
+{
+    int fd;
+    char outstr[200];
+    time_t t;
+    struct tm *tmp;
+    int len_timestamp;
+    DEBUG_LOG("Entered timestamp thread");
+    while(g_server_running) {
+        t = time(NULL);
+        tmp = localtime(&t);
+        len_timestamp = strftime(outstr, sizeof(outstr), "timestamp:%a, %d %b %Y %T %z %n", tmp);
+        fd = open(RECEIVED_SOCKET_DATA_PATH, O_CREAT | O_WRONLY | O_APPEND, 0664);
+        DEBUG_LOG("len_timestamp = %d", len_timestamp);
+        DEBUG_LOG("fd = %d", fd);
+        if (fd==-1) {
+            syslog(LOG_ERR, "Could not open file %s", RECEIVED_SOCKET_DATA_PATH);
+            DEBUG_LOG("Could not open file %s", RECEIVED_SOCKET_DATA_PATH);
+        }
+        if (len_timestamp == 0) {
+            syslog(LOG_ERR, "Failed to format timestamp");
+            DEBUG_LOG("Failed to format timestamp");
+        } else {
+
+            pthread_mutex_lock(&mutex);
+            write_to_file(fd, &outstr[0], len_timestamp);
+            pthread_mutex_unlock(&mutex);
+        }
+        close(fd);
+        for (int i = 0; (i < TIMESTAMP_THREAD_SLEEP_TIME) && (g_server_running); i++) {
+            sleep(1);
+        }
+    }
+    (void)data;
+    return NULL;
+}
+
+int create_job_thread(int cfd, char* client_addr) {
+    int err;
+    pthread_t thread;
+    struct job_data* job_data = malloc(sizeof(struct job_data));
+    job_data->mutex = &mutex;
+    job_data->cfd = cfd;
+    job_data->job_state = NOT_STARTED;
+    memcpy(job_data->client, client_addr, INET6_ADDRSTRLEN);
+    err = pthread_create(&thread, NULL, threadfunc, (void*)job_data);
+    if(err == 0) {
+        struct slist_job_data * slist_job_data = malloc(sizeof(struct slist_job_data));
+        job_data->thread_id = thread;
+        slist_job_data->elm = job_data;
+        SLIST_INSERT_HEAD(&head, slist_job_data, entries);
+    } else {
+        DEBUG_LOG("Failed to create thread with error %s", strerror(errno));
+        syslog(LOG_ERR ,"Failed to create thread with error %s", strerror(errno));
+        free(job_data);
+    }
+    return err;
 }
 
 int main(int argc, char* argv[]) {
@@ -24,6 +116,9 @@ int main(int argc, char* argv[]) {
     int err;
     struct sigaction termination_action;
     char client_addr[INET6_ADDRSTRLEN];
+    struct slist_job_data* c;
+    struct slist_job_data* n;
+    pthread_t timestamp_thread;
     bool run_as_daemon = false;
     
     if (argc > 2) {
@@ -38,7 +133,7 @@ int main(int argc, char* argv[]) {
             DEBUG_LOG("Supported options are : [-d]");
         }
     }
-        
+    
     memset(&termination_action, 0, sizeof(termination_action));
     termination_action.sa_handler=sigint_handler;
 
@@ -73,7 +168,8 @@ int main(int argc, char* argv[]) {
     if (run_as_daemon) {
         daemon(0, 0);
     }
-
+    pthread_create(&timestamp_thread, NULL, timestamp_threadfunc, NULL);
+    g_timestamp_thread_id = timestamp_thread;
     while(g_server_running) {
         cfd = wait_for_connection(sfd, client_addr, sizeof(client_addr));
 
@@ -82,40 +178,48 @@ int main(int argc, char* argv[]) {
             // syslog(LOG_ERR ,"Connection Failed try to reconnect...");
             break;
         }
-        err = echo_conn(cfd);
-        if (err == -1) {
-            DEBUG_LOG("Connection failed with error %s", strerror(errno));
-            syslog(LOG_ERR ,"Connection failed with error %s", strerror(errno));
+        create_job_thread(cfd, client_addr);
+        SLIST_FOREACH_SAFE(c, &head, entries, n){
+            if (c->elm->job_state == SUCCESS || c->elm->job_state == FAILED) {
+                pthread_join(c->elm->thread_id, NULL);
+                free(c->elm);
+                SLIST_REMOVE(&head, c, slist_job_data, entries);
+                free(c);
+            }
         }
-
-        close(cfd);
-
-        printf("[Server] Closed connection from %s\n", client_addr);
-        syslog(LOG_INFO ,"Closed connection from %s", client_addr);
     }
     syslog(LOG_INFO ,"Caught signal, exiting");
     DEBUG_LOG("Caught signal, exiting");
+
+    SLIST_FOREACH_SAFE(c, &head, entries, n){
+        pthread_join(c->elm->thread_id, NULL);
+        err = shutdown(c->elm->cfd, SHUT_RDWR);
+        if (errno == EBADF) {
+            DEBUG_LOG("Connection file already closed cfd");
+            syslog(LOG_ERR ,"Connection file already closed");
+        }
+        if ((err != 0) && errno != EBADF) {
+            DEBUG_LOG("Failed to shutdown socket cfd = %d with error : %s", c->elm->cfd, strerror(errno));
+            syslog(LOG_ERR ,"Failed to shutdown socket cfd = %d with error : %s", c->elm->cfd, strerror(errno));
+        }
+        free(c->elm);
+        SLIST_REMOVE(&head, c, slist_job_data, entries);
+        free(c);
+    }
+    pthread_join(g_timestamp_thread_id, NULL);
 
     err = shutdown(sfd, SHUT_RDWR);
     if (err != 0) {
         DEBUG_LOG("Failed to shutdown socket sfd = %d with error : %s", sfd, strerror(errno));
         syslog(LOG_ERR ,"Failed to shutdown socket sfd = %d with error : %s", sfd, strerror(errno));
     }
-    err = shutdown(cfd, SHUT_RDWR);
-    if (errno == EBADF) {
-        DEBUG_LOG("Connection file already closed cfd");
-        syslog(LOG_ERR ,"Connection file already closed");
-    }
-    if ((err != 0) && errno != EBADF) {
-        DEBUG_LOG("Failed to shutdown socket cfd = %d with error : %s", cfd, strerror(errno));
-        syslog(LOG_ERR ,"Failed to shutdown socket cfd = %d with error : %s", cfd, strerror(errno));
-    }
+    DEBUG_LOG("AFTER SHUTDOWN");
     err = remove(RECEIVED_SOCKET_DATA_PATH);
     if (err != 0) {
         DEBUG_LOG("Failed to remove file %s", RECEIVED_SOCKET_DATA_PATH);
         syslog(LOG_ERR ,"Failed to remove file %s", RECEIVED_SOCKET_DATA_PATH);
     }
-
+    DEBUG_LOG("AFTER REMOVE FILE");
     return 0;
 }
 

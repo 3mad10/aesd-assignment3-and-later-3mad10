@@ -12,12 +12,14 @@
 #include <errno.h>
 #include <fcntl.h>
 #include "stdbool.h"
+#include <string.h>
 
 #include "server_cfg.h"
 #include "file_handling.h"
+#include "types.h"
 
 int setup_socket(int port, int sock_type);
 int wait_for_connection(int sfd, char* client_addr, int addr_len);
-int echo_conn(int cfd);
+int echo_conn(struct job_data* data);
 
 #endif

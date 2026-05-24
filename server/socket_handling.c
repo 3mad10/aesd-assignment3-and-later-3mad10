@@ -2,7 +2,7 @@
 
 static void *get_in_addr(struct sockaddr *sa);
 static int send_received_data(int cfd);
-static void save_received_data(const char* recv_buff, int n);
+static void save_received_data(const char* recv_buff, int n, pthread_mutex_t* mutex);
 static void send_chunk(int cfd, const char* buf, int len); 
 
 int setup_socket(int port, int sock_type) {
@@ -77,12 +77,13 @@ int wait_for_connection(int sfd, char* client_addr, int addr_len) {
 }
 
 
-int echo_conn(int cfd) {
+int echo_conn(struct job_data* job_data) {
     int n;
     char* recv_buff = (char *)malloc(RCV_CHUNK_SIZE);
     long unsigned int total_size = 0;
     long unsigned int capacity = RCV_CHUNK_SIZE;
-    DEBUG_LOG("allocated buffer with size %d", capacity);
+    int cfd = job_data->cfd;
+    DEBUG_LOG("allocated buffer with size %zu", capacity);
     if (recv_buff == NULL) return -1;
 
     while(((n = recv(cfd, &recv_buff[total_size], capacity-total_size, 0))!=0)) {
@@ -95,7 +96,7 @@ int echo_conn(int cfd) {
         total_size += n;
         if (memchr(&recv_buff[total_size - n], '\n', n) != NULL) {
             DEBUG_LOG("saving recv_buff byte[0] = %c to byte[%ld] = %c", recv_buff[0], total_size, recv_buff[total_size - 2]);
-            save_received_data((char*)&recv_buff[0], total_size);
+            save_received_data((char*)&recv_buff[0], total_size, job_data->mutex);
             send_received_data(cfd);
             total_size = 0;
         }
@@ -108,7 +109,7 @@ int echo_conn(int cfd) {
                 DEBUG_LOG("Error reallocating receive buffer");
                 return -1;
             }
-            DEBUG_LOG("New buffer size = %d byte", capacity);
+            DEBUG_LOG("New buffer size = %zu byte", capacity);
         }
     }
     free(recv_buff);
@@ -129,7 +130,6 @@ void *get_in_addr(struct sockaddr *sa)
     }
 }
 
-
 int send_received_data(int cfd) {
     int n;
     int fd;
@@ -141,7 +141,7 @@ int send_received_data(int cfd) {
         DEBUG_LOG("char[0] = %c , char[n-2] = %c" , transmit_buff[0], transmit_buff[n-2]);
         if (n == -1) {
             syslog(LOG_ERR, "Error Sending Chunk to client");
-            DEBUG_LOG("send failed with error", strerror(errno));
+            DEBUG_LOG("send failed with error %s", strerror(errno));
         }
         send_chunk(cfd, transmit_buff, n);
     }
@@ -158,7 +158,7 @@ void send_chunk(int cfd, const char* buf, int len) {
         n = send(cfd, buf, len, 0);
         if (n == -1) {
             syslog(LOG_ERR, "Error Sending Chunk to client");
-            DEBUG_LOG("send failed with error", strerror(errno));
+            DEBUG_LOG("send failed with error %s", strerror(errno));
             break;
         }
         DEBUG_LOG("n = %d", n);
@@ -168,7 +168,7 @@ void send_chunk(int cfd, const char* buf, int len) {
 }
 
 
-void save_received_data(const char* recv_buff, int n) {
+void save_received_data(const char* recv_buff, int n, pthread_mutex_t* mutex) {
     int fd;
 
     fd = open(RECEIVED_SOCKET_DATA_PATH, O_CREAT | O_WRONLY | O_APPEND, 0664);
@@ -176,8 +176,10 @@ void save_received_data(const char* recv_buff, int n) {
         syslog(LOG_ERR, "Could not open file %s", RECEIVED_SOCKET_DATA_PATH);
         DEBUG_LOG("Could not open file %s", RECEIVED_SOCKET_DATA_PATH);
     }
+    pthread_mutex_lock(mutex);
     DEBUG_LOG("Created file with fd = %d", fd);
     write_to_file(fd, &recv_buff[0], n);
+    pthread_mutex_unlock(mutex);
     close(fd);
 }
 
