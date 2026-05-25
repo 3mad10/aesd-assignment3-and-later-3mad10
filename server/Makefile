@@ -1,19 +1,21 @@
 OBJECTS = file_handling.o socket_handling.o aesdsocket.o
-OUTPUT = aesdsocket
 
-CC := $(CROSS_COMPILE)gcc
+CC ?= $(CROSS_COMPILE)gcc
+CFLAGS ?= -Wall -Wextra -g
+TARGET ?= aesdsocket
+LDFLAGS ?=
 
 all: $(OBJECTS)
-	$(CC) $^ -o aesdsocket
+	$(CC) $(LDFLAGS) $^ -o $(TARGET)
 
 aesdsocket.o: aesdsocket.c file_handling.o socket_handling.o
-	$(CC) -Wall -Wextra -g -c aesdsocket.c
+	$(CC) $(CFLAGS) -c aesdsocket.c
 
 file_handling.o: file_handling.c file_handling.h
-	$(CC) -Wall -Wextra -g -c file_handling.c
+	$(CC) $(CFLAGS) -c file_handling.c
 
 socket_handling.o: socket_handling.c socket_handling.h server_cfg.h
-	$(CC) -Wall -Wextra -g -c socket_handling.c
+	$(CC) $(CFLAGS) -c socket_handling.c
 
 clean :
-	rm -f $(OBJECTS) $(OUTPUT)
+	rm -f $(OBJECTS) $(TARGET)

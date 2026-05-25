@@ -1,10 +1,12 @@
 
-CC := $(CROSS_COMPILE)gcc
+CC ?= $(CROSS_COMPILE)gcc
+CFLAGS ?= -Wall -Wextra -g
+TARGET ?= writer
 
-all: writer
+all: $(TARGET)
 
-writer: writer.c
-	$(CC) -Wall -Wextra -g writer.c -o writer
+$(TARGET): writer.c
+	$(CC) $(CFLAGS) writer.c -o $(TARGET)
 
 clean :
-	rm -f writer
+	rm -f $(TARGET)

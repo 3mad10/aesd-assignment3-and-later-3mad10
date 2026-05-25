@@ -65,8 +65,6 @@ void* timestamp_threadfunc(void* data)
         tmp = localtime(&t);
         len_timestamp = strftime(outstr, sizeof(outstr), "timestamp:%a, %d %b %Y %T %z %n", tmp);
         fd = open(RECEIVED_SOCKET_DATA_PATH, O_CREAT | O_WRONLY | O_APPEND, 0664);
-        DEBUG_LOG("len_timestamp = %d", len_timestamp);
-        DEBUG_LOG("fd = %d", fd);
         if (fd==-1) {
             syslog(LOG_ERR, "Could not open file %s", RECEIVED_SOCKET_DATA_PATH);
             DEBUG_LOG("Could not open file %s", RECEIVED_SOCKET_DATA_PATH);
