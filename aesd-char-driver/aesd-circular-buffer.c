@@ -13,7 +13,7 @@
 #else
 #include <string.h>
 #endif
-
+#include <stdio.h>
 #include "aesd-circular-buffer.h"
 
 /**
@@ -32,7 +32,35 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
     /**
     * TODO: implement per description
     */
+   if (NULL == buffer || NULL == entry_offset_byte_rtn) 
+   {
     return NULL;
+   }
+    struct aesd_buffer_entry *entry;
+    struct aesd_buffer_entry *target_entry = NULL;
+    size_t current_offset = 0;
+    uint8_t i = buffer->out_offs;
+    if(buffer->full == true)
+    {
+        entry = &buffer->entry[i];
+        if(char_offset < (current_offset + entry->size)) {
+            target_entry = entry;
+            *entry_offset_byte_rtn = char_offset - current_offset;
+        }
+        current_offset+=entry->size;
+        i++;
+    }
+    for(; (i != buffer->in_offs) && (target_entry == NULL); i = ((i+1)%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED))
+    {
+        entry = &buffer->entry[i];
+        if(char_offset < (current_offset + entry->size)) {
+            target_entry = entry;
+            *entry_offset_byte_rtn = char_offset - current_offset;
+            break;
+        }
+        current_offset+=entry->size;
+    }
+    return target_entry;
 }
 
 /**
@@ -47,6 +75,28 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     /**
     * TODO: implement per description
     */
+   uint8_t circulated_inoffs;
+   uint8_t circulated_outoffs;
+   if ((NULL == buffer) || (NULL == add_entry)) {
+        return;
+    }
+    printf("buffer->in_offs before : %d ", buffer->in_offs);
+    printf("buffer->out_offs before : %d \n", buffer->out_offs);
+   circulated_inoffs = buffer->in_offs%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+   circulated_outoffs = buffer->out_offs%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+    buffer->entry[circulated_inoffs] = *add_entry;
+    circulated_inoffs = (circulated_inoffs + 1)%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    if (buffer->full) {
+        circulated_outoffs = (circulated_outoffs + 1)%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    } else if (circulated_inoffs == circulated_outoffs)
+    {
+        buffer->full = true;
+    }
+    buffer->in_offs = circulated_inoffs;
+    buffer->out_offs = circulated_outoffs;
+    printf("buffer->in_offs after : %d ", buffer->in_offs);
+    printf("buffer->out_offs after : %d\n", buffer->out_offs);
 }
 
 /**
