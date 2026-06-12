@@ -13,7 +13,6 @@
 #else
 #include <string.h>
 #endif
-#include <stdio.h>
 #include "aesd-circular-buffer.h"
 
 /**
@@ -70,33 +69,37 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 * Any necessary locking must be handled by the caller
 * Any memory referenced in @param add_entry must be allocated by and/or must have a lifetime managed by the caller.
 */
-void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
+struct aesd_buffer_entry* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
     /**
     * TODO: implement per description
     */
    uint8_t circulated_inoffs;
    uint8_t circulated_outoffs;
+   struct aesd_buffer_entry* popped = NULL;
    if ((NULL == buffer) || (NULL == add_entry)) {
-        return;
+        return NULL;
     }
-    printf("buffer->in_offs before : %d ", buffer->in_offs);
-    printf("buffer->out_offs before : %d \n", buffer->out_offs);
+    // printf("buffer->in_offs before : %d ", buffer->in_offs);
+    // printf("buffer->out_offs before : %d \n", buffer->out_offs);
    circulated_inoffs = buffer->in_offs%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
    circulated_outoffs = buffer->out_offs%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
 
+    if (buffer->full) {
+        popped = &buffer->entry[circulated_inoffs];
+        circulated_outoffs = (circulated_outoffs + 1)%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    }
     buffer->entry[circulated_inoffs] = *add_entry;
     circulated_inoffs = (circulated_inoffs + 1)%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
-    if (buffer->full) {
-        circulated_outoffs = (circulated_outoffs + 1)%AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
-    } else if (circulated_inoffs == circulated_outoffs)
+    if (circulated_inoffs == circulated_outoffs)
     {
         buffer->full = true;
     }
     buffer->in_offs = circulated_inoffs;
     buffer->out_offs = circulated_outoffs;
-    printf("buffer->in_offs after : %d ", buffer->in_offs);
-    printf("buffer->out_offs after : %d\n", buffer->out_offs);
+    // printf("buffer->in_offs after : %d ", buffer->in_offs);
+    // printf("buffer->out_offs after : %d\n", buffer->out_offs);
+    return popped;
 }
 
 /**
