@@ -11,8 +11,9 @@ struct slist_job_data
 
 static volatile sig_atomic_t g_server_running = 1;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+#if USE_AESD_CHAR_DEVICE != 1
 static pthread_t g_timestamp_thread_id;
-
+#endif
 
 SLIST_HEAD(slisthead, slist_job_data) head = SLIST_HEAD_INITIALIZER(head);
 
@@ -52,6 +53,7 @@ void* threadfunc(void* data)
     return (void*)job_data;
 }
 
+#if USE_AESD_CHAR_DEVICE != 1
 void* timestamp_threadfunc(void* data)
 {
     int fd;
@@ -86,6 +88,7 @@ void* timestamp_threadfunc(void* data)
     (void)data;
     return NULL;
 }
+#endif
 
 int create_job_thread(int cfd, char* client_addr) {
     int err;
@@ -116,7 +119,9 @@ int main(int argc, char* argv[]) {
     char client_addr[INET6_ADDRSTRLEN];
     struct slist_job_data* c;
     struct slist_job_data* n;
+    #if USE_AESD_CHAR_DEVICE !=1
     pthread_t timestamp_thread;
+    #endif
     bool run_as_daemon = false;
     
     if (argc > 2) {
@@ -166,8 +171,10 @@ int main(int argc, char* argv[]) {
     if (run_as_daemon) {
         daemon(0, 0);
     }
+    #if USE_AESD_CHAR_DEVICE != 1
     pthread_create(&timestamp_thread, NULL, timestamp_threadfunc, NULL);
     g_timestamp_thread_id = timestamp_thread;
+    #endif
     while(g_server_running) {
         cfd = wait_for_connection(sfd, client_addr, sizeof(client_addr));
 
@@ -204,7 +211,10 @@ int main(int argc, char* argv[]) {
         SLIST_REMOVE(&head, c, slist_job_data, entries);
         free(c);
     }
+
+    #if USE_AESD_CHAR_DEVICE != 1
     pthread_join(g_timestamp_thread_id, NULL);
+    #endif
 
     err = shutdown(sfd, SHUT_RDWR);
     if (err != 0) {
@@ -212,11 +222,13 @@ int main(int argc, char* argv[]) {
         syslog(LOG_ERR ,"Failed to shutdown socket sfd = %d with error : %s", sfd, strerror(errno));
     }
     DEBUG_LOG("AFTER SHUTDOWN");
+    #if USE_AESD_CHAR_DEVICE != 1
     err = remove(RECEIVED_SOCKET_DATA_PATH);
     if (err != 0) {
         DEBUG_LOG("Failed to remove file %s", RECEIVED_SOCKET_DATA_PATH);
         syslog(LOG_ERR ,"Failed to remove file %s", RECEIVED_SOCKET_DATA_PATH);
     }
+    #endif
     DEBUG_LOG("AFTER REMOVE FILE");
     return 0;
 }

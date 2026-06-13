@@ -1,4 +1,6 @@
 *.o
+*.ko
+*.cmd
 writer
 aesdsocket
 Test_*_Runner.c

@@ -170,11 +170,14 @@ void send_chunk(int cfd, const char* buf, int len) {
 
 void save_received_data(const char* recv_buff, int n, pthread_mutex_t* mutex) {
     int fd;
-
+    #if USE_AESD_CHAR_DEVICE == 1
+    fd = open(RECEIVED_SOCKET_DATA_PATH, O_RDWR);
+    #else
     fd = open(RECEIVED_SOCKET_DATA_PATH, O_CREAT | O_WRONLY | O_APPEND, 0664);
-    if (fd==-1) {
+    #endif
+    if (fd<0) {
         syslog(LOG_ERR, "Could not open file %s", RECEIVED_SOCKET_DATA_PATH);
-        DEBUG_LOG("Could not open file %s", RECEIVED_SOCKET_DATA_PATH);
+        DEBUG_LOG("Could not open file %s with error : %s", RECEIVED_SOCKET_DATA_PATH, strerror(errno));
     }
     pthread_mutex_lock(mutex);
     DEBUG_LOG("Created file with fd = %d", fd);
