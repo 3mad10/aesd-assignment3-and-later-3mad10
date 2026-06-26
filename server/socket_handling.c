@@ -2,7 +2,7 @@
 
 static void *get_in_addr(struct sockaddr *sa);
 static int send_received_data(int cfd);
-static void save_received_data(const char* recv_buff, int n, pthread_mutex_t* mutex);
+static int save_received_data(const char* recv_buff, int n);
 static void send_chunk(int cfd, const char* buf, int len); 
 
 int setup_socket(int port, int sock_type) {
@@ -83,6 +83,7 @@ int echo_conn(struct job_data* job_data) {
     long unsigned int total_size = 0;
     long unsigned int capacity = RCV_CHUNK_SIZE;
     int cfd = job_data->cfd;
+    int ret;
     DEBUG_LOG("allocated buffer with size %zu", capacity);
     if (recv_buff == NULL) return -1;
 
@@ -96,8 +97,16 @@ int echo_conn(struct job_data* job_data) {
         total_size += n;
         if (memchr(&recv_buff[total_size - n], '\n', n) != NULL) {
             DEBUG_LOG("saving recv_buff byte[0] = %c to byte[%ld] = %c", recv_buff[0], total_size, recv_buff[total_size - 2]);
-            save_received_data((char*)&recv_buff[0], total_size, job_data->mutex);
+            pthread_mutex_lock(job_data->mutex);
+            ret = save_received_data((char*)&recv_buff[0], total_size);
+            pthread_mutex_unlock(job_data->mutex);
+            if(ret == -1) {
+                n = -1;
+                break;
+            }
+            pthread_mutex_lock(job_data->mutex);
             send_received_data(cfd);
+            pthread_mutex_unlock(job_data->mutex);
             total_size = 0;
         }
         if (total_size > capacity - REALLOC_LIMIT) {
@@ -168,7 +177,7 @@ void send_chunk(int cfd, const char* buf, int len) {
 }
 
 
-void save_received_data(const char* recv_buff, int n, pthread_mutex_t* mutex) {
+int save_received_data(const char* recv_buff, int n) {
     int fd;
     #if USE_AESD_CHAR_DEVICE == 1
     fd = open(RECEIVED_SOCKET_DATA_PATH, O_RDWR);
@@ -178,11 +187,11 @@ void save_received_data(const char* recv_buff, int n, pthread_mutex_t* mutex) {
     if (fd<0) {
         syslog(LOG_ERR, "Could not open file %s", RECEIVED_SOCKET_DATA_PATH);
         DEBUG_LOG("Could not open file %s with error : %s", RECEIVED_SOCKET_DATA_PATH, strerror(errno));
+        return -1;
     }
-    pthread_mutex_lock(mutex);
     DEBUG_LOG("Created file with fd = %d", fd);
     write_to_file(fd, &recv_buff[0], n);
-    pthread_mutex_unlock(mutex);
     close(fd);
+    return 0;
 }
 

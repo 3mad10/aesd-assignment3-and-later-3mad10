@@ -66,164 +66,118 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
-    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle read
-     */
-    char* to;
+    struct aesd_dev* dev;
     struct aesd_buffer_entry* read_entry;
     size_t entry_byte_off = 0;
-    size_t count_read_bytes = 0;
-    int iter;
-    PDEBUG("h1");
-    struct aesd_dev* dev = (struct aesd_dev*) filp->private_data;
-    struct aesd_circular_buffer* circular_buffer = dev->buffer;
-    PDEBUG("h2");
+    size_t bytes_to_copy = 0;
+
+    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
+
+    dev = (struct aesd_dev*) filp->private_data;
+
     if (mutex_lock_interruptible(&dev->lock))
     {
-        retval = -ERESTARTSYS;
-        goto out;
+        return -ERESTARTSYS;
     }
-    to = kmalloc(count ,GFP_KERNEL);
-    if (!to) {
-        goto out;
-    }
-    PDEBUG("h3");
-    while(count > 0) {
-        PDEBUG("count : %d", count);
-        read_entry = aesd_circular_buffer_find_entry_offset_for_fpos(
-                                                                    circular_buffer,
-                                                                    *f_pos + count_read_bytes,
-                                                                    &entry_byte_off
-                                                                    );
-        if (!read_entry)
-        {
-            break;
-        }
-        for(iter = 0; iter < read_entry->size; iter++)
-        {
-            to[count_read_bytes + iter] = read_entry->buffptr[iter];
-        }
-        count_read_bytes = count_read_bytes + read_entry->size;
-        count = count - read_entry->size;
-        PDEBUG("count_read_bytes : %d", count_read_bytes);
-        PDEBUG("new count : %d", count);
 
+    read_entry = aesd_circular_buffer_find_entry_offset_for_fpos(&dev->buffer, *f_pos, &entry_byte_off);
+    if (!read_entry)
+    {
+        retval = 0;
+        goto out;
     }
-    if(copy_to_user(buf, to, count_read_bytes))
+
+    bytes_to_copy = read_entry->size - entry_byte_off;
+    if (bytes_to_copy > count) {
+        bytes_to_copy = count;
+    }
+
+    if(copy_to_user(buf, read_entry->buffptr + entry_byte_off, bytes_to_copy))
     {
         retval = -EFAULT;
         goto out;
     }
-    PDEBUG("h8");
-    retval = count_read_bytes;
-    *f_pos = *f_pos + count_read_bytes;
-    out:
-        mutex_unlock(&dev->lock);
-        return retval;
+
+    retval = bytes_to_copy;
+    *f_pos += bytes_to_copy;
+
+out:
+    mutex_unlock(&dev->lock);
+    return retval;
 }
 
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
-    PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle write
-     */
     char* kernel_buff;
-    const char* popped_entry;
-    struct aesd_buffer_entry* new_entry;
-    static bool ongoing_reception = false;
+    const char* popped_entry = NULL;
     struct aesd_dev* dev = (struct aesd_dev*) filp->private_data;
-    struct aesd_circular_buffer* circular_buffer = dev->buffer;
-    bool new_line_exist;
+    bool new_line_exist = false;
+    char *new_buffptr = NULL;
+    size_t i;
+
+    PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
+
     if (mutex_lock_interruptible(&dev->lock))
     {
-        retval = -ERESTARTSYS;
-        goto out;
+        return -ERESTARTSYS;
     }
+
     kernel_buff = kmalloc(count ,GFP_KERNEL);
     if (!kernel_buff) {
+        retval = -ENOMEM;
         goto out;
     }
-    PDEBUG("h2");
+
     if(copy_from_user(kernel_buff, buf, count))
     {
-        PDEBUG("h3");
         retval = -EFAULT;
-        goto free_kernel_buff;
+        kfree(kernel_buff);
+        goto out;
     }
+
     new_line_exist = has_newline(kernel_buff, count);
-    PDEBUG("h4");
-    // no current reception ongoing and new line in received data add in buffer
-    if (!ongoing_reception && new_line_exist)
-    {
-        PDEBUG("!ongoing_reception && new_line_exist");
-        new_entry = kmalloc(sizeof(struct aesd_buffer_entry) ,GFP_KERNEL);
-        if (!new_entry) {
-            goto free_kernel_buff;
-        }
-        new_entry->buffptr = kernel_buff;
-        new_entry->size = count;
-        popped_entry = aesd_circular_buffer_add_entry(circular_buffer, new_entry);
-    } // no current reception ongoing and no new line in received data start a new reception cycle
-    else if(!ongoing_reception && !new_line_exist)
-    {
-        PDEBUG("!ongoing_reception && !new_line_exist");
-        dev->new_entry = kmalloc(sizeof(struct aesd_buffer_entry) ,GFP_KERNEL);
+
+    if (dev->new_entry == NULL) {
+        dev->new_entry = kmalloc(sizeof(struct aesd_buffer_entry), GFP_KERNEL);
         if (!dev->new_entry) {
-            goto free_kernel_buff;
+            retval = -ENOMEM;
+            kfree(kernel_buff);
+            goto out;
         }
         dev->new_entry->buffptr = kernel_buff;
         dev->new_entry->size = count;
-        ongoing_reception = true;
-    } // current reception ongoing and no new line in received data continue reception
-    else if (ongoing_reception && !new_line_exist)
-    {
-        PDEBUG("ongoing_reception && !new_line_exist");
-        PDEBUG("temp_entry->buffptr : %x", dev->new_entry->buffptr);
-        krealloc(dev->new_entry->buffptr, dev->new_entry->size + count, GFP_KERNEL);
-        if (!dev->new_entry->buffptr) {
-            goto free_kernel_buff;
+    } else {
+        new_buffptr = krealloc(dev->new_entry->buffptr, dev->new_entry->size + count, GFP_KERNEL);
+        if (!new_buffptr) {
+            retval = -ENOMEM;
+            kfree(kernel_buff);
+            goto out;
         }
-        PDEBUG("start copying");
-        for(int i = 0; i < count; i++)
-        {
-            PDEBUG("copy %c from kernel_buff[%d] to temp_entry->buffptr[%d + %d]", kernel_buff[i], i, dev->new_entry->size, i);
-            dev->new_entry->buffptr[dev->new_entry->size+i] = kernel_buff[i];
-        }
-        PDEBUG("finished copy");
-        dev->new_entry->size += count;
-    } // current reception ongoing and new line in received data finish reception cycle
-    else
-    {
-        PDEBUG("ongoing_reception && new_line_exist");
-        krealloc(dev->new_entry->buffptr, dev->new_entry->size + count  ,GFP_KERNEL);
-        if (!dev->new_entry->buffptr) {
-            goto free_kernel_buff;
-        }
-        for(int i = 0; i < count; i++)
+        dev->new_entry->buffptr = new_buffptr;
+        for(i = 0; i < count; i++)
         {
             dev->new_entry->buffptr[dev->new_entry->size+i] = kernel_buff[i];
         }
-        
         dev->new_entry->size += count;
-        popped_entry = aesd_circular_buffer_add_entry(circular_buffer, dev->new_entry);
-        ongoing_reception = false;
-    }
-    PDEBUG("h5");
-    if(popped_entry) {
-        kfree(popped_entry);
-    }
-    PDEBUG("h6");
-    retval = *f_pos + count;
-    goto out;
-    free_kernel_buff:
         kfree(kernel_buff);
-    out:
-        mutex_unlock(&dev->lock);
-        return retval;
+    }
+
+    if (new_line_exist) {
+        popped_entry = aesd_circular_buffer_add_entry(&dev->buffer, dev->new_entry);
+        if (popped_entry) {
+            kfree((void*)popped_entry);
+        }
+        kfree(dev->new_entry);
+        dev->new_entry = NULL;
+    }
+
+    retval = count;
+
+out:
+    mutex_unlock(&dev->lock);
+    return retval;
 }
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
@@ -261,13 +215,12 @@ int aesd_init_module(void)
         return result;
     }
     memset(&aesd_device,0,sizeof(struct aesd_dev));
-
+    printk(KERN_INFO "In Init of Char Driver \n");
     /**
      * TODO: initialize the AESD specific portion of the device
      */
-    
     mutex_init(&aesd_device.lock);
-    aesd_device.buffer = kmalloc(sizeof(struct aesd_circular_buffer) ,GFP_KERNEL);
+    aesd_circular_buffer_init(&aesd_device.buffer);
 
     result = aesd_setup_cdev(&aesd_device);
     if( result ) {
@@ -281,17 +234,25 @@ void aesd_cleanup_module(void)
 {
     dev_t devno = MKDEV(aesd_major, aesd_minor);
     
-    struct aesd_circular_buffer* circular_buffer = aesd_device.buffer;
+    struct aesd_circular_buffer* circular_buffer = &aesd_device.buffer;
+    struct aesd_buffer_entry* entry = aesd_device.new_entry;
     cdev_del(&aesd_device.cdev);
-
+    printk(KERN_INFO "In Deinit of Char Driver \n");
     /**
      * TODO: cleanup AESD specific poritions here as necessary
      */
     for (int i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++)
     {
         kfree(circular_buffer->entry[i].buffptr);
+        circular_buffer->entry[i].size = 0;
     }
-    kfree(circular_buffer);
+    if(entry) {
+        if(entry->buffptr) 
+        {
+            kfree(entry->buffptr);
+        }
+        entry->size = 0;
+    }
     unregister_chrdev_region(devno, 1);
 }
 
